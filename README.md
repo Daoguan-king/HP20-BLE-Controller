@@ -1,5 +1,7 @@
 # HP20 BLE Controller (Windows)
 
+**English** | [简体中文](README-zh.md)
+
 An **unofficial** Windows desktop controller for the ALIENTEK / 正点原子 **HP20** heating platform, written in Python (bleak + Tkinter).
 
 > **Disclaimer**
