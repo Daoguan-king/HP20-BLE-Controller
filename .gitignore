@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.pyo
+build/
+dist/
+logs/
+out/
+.audit/
+*.apk
+*.pdf
+*.csv
+*.log
+dist/logs/
+docs/_fragments/
+.venv/
+.idea/
+.vscode/

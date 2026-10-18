@@ -1,0 +1,474 @@
+{
+  "schema_version": 1,
+  "device": "HP20",
+  "vendor": "ALIENTEK 正点原子",
+  "source": {
+    "apk": "atk_xtool_V2.0.0.apk",
+    "dart_snapshot": "lib/x86_64/libapp.so (Dart AOT 3.10.3, product, compressed-pointers)",
+    "method": "blutter 反汇编 (arm64 libapp.so) + 逐函数 IL 阅读",
+    "toolchain": "tools/re/run_blutter2.bat → out/blutter/asm/atk_xtool/**"
+  },
+  "transport": {
+    "service_uuid": "0000ff01-0000-1000-8000-00805f9b34fb",
+    "notify_char_uuid": "0000ff02-0000-1000-8000-00805f9b34fb",
+    "write_char_uuid": "0000ffff-0000-1000-8000-00805f9b34fb",
+    "cccd_uuid": "00002902-0000-1000-8000-00805f9b34fb"
+  },
+  "frame": {
+    "request_header": "AF",
+    "response_header": "DF",
+    "layout": "header:u8 | dev_id:u8 | family:u8 | cmd:u8 | length:u8 | payload[length] | lrc:u8",
+    "total_length": "6 + length",
+    "max_payload": 255,
+    "lrc": "LRC = (256 - (sum(all bytes before LRC) & 0xFF)) & 0xFF",
+    "lrc_evidence": "checksum.dart Checksum::calculationCheck @0x3d5ce0",
+    "framing_evidence": "frame_builder.dart FrameBuilder::buildRaw @0x3d5ae8 (movz x16,#0x15e → 0xAF)"
+  },
+  "device_header": {
+    "value": "0x0209",
+    "bytes": "09 02",
+    "note": "dev_id = 0x09, family = 0x02；EL15 = 0x0307 (07 03)、DM40 = 0x0305 (05 03)、ND1 = 0x0306 (06 03)、HP15 = 0x0207 (07 02)",
+    "evidence": "device_session.dart enum DevType (objs.txt Obj!DevType@6c1f51..6c2011)"
+  },
+  "timing": {
+    "poll_interval_ms": 125,
+    "poll_interval_evidence": "managecmd_hp20.dart startRealDataLoop → Duration@6c2da1 = 0x1e848 µs",
+    "response_timeout_ms": 1000,
+    "response_timeout_evidence": "device_session.dart sendCMDWaitResult timer closure @0x3d5d70 (cmp ms, #0x3e8)",
+    "timeout_tick_ms": 10,
+    "timeout_tick_evidence": "Duration@6c2e61 = 0x2710 µs",
+    "write_interval_ms": 15,
+    "write_interval_evidence": "write_queue.dart WriteQueue::enqueue → Future.delayed(Duration@6c2e51 = 0x3a98 µs)",
+    "single_command_in_flight": true,
+    "busy_evidence": "device_session.dart sendCMDWaitResultWithData @0x3d76c4: field_4b busy → print('指令任务繁忙，拒绝重复调用')",
+    "post_connect_delay_ms": 1000,
+    "post_connect_evidence": "device_session.dart start @0x434bf0: connect → Future.delayed(1s) → _discover → _subscribe → Future.delayed(1s)"
+  },
+  "commands": [
+    {
+      "name": "identify",
+      "cmd": "00",
+      "direction": "write",
+      "summary": "握手/取设备头两字节；App 连接后第一条命令，用应答 payload[0:2] 判定型号",
+      "payload_format": [],
+      "frame_template_hex": "AF 09 02 00 00 <LRC>",
+      "examples": [
+        {
+          "desc": "identify (＝App 的 RegisterDev)",
+          "frame_hex": "AF 09 02 00 00 46"
+        }
+      ],
+      "response": {
+        "cmd": "00",
+        "payload_format": [
+          "dev_id:u8 (HP20 = 0x09)",
+          "family:u8 (HP20 = 0x02)"
+        ],
+        "note": "DeviceSession::RegisterDev 用 payload[0] | payload[1]<<8 = 0x0209 匹配 enum DevType.HP20.field_14"
+      },
+      "confidence": "high",
+      "evidence": [
+        "device_session.dart DeviceSession::RegisterDev @0x431c74 (orr x3, x1, x0 → field_2b)",
+        "device_session.dart CreatManageCMD @0x431d54 firstWhere(t.field_14 == field_2b) closure @0x434a30",
+        "objs.txt: Obj!DevType@6c1fd1 {off_10:'HP20', off_14:int(0x209)}"
+      ]
+    },
+    {
+      "name": "get_thermostat",
+      "cmd": "04",
+      "direction": "read",
+      "summary": "读回 T1..T4 预设温度（4 × i16 小端）",
+      "payload_format": [],
+      "frame_template_hex": "AF 09 02 04 00 <LRC>",
+      "examples": [
+        {
+          "desc": "read presets",
+          "frame_hex": "AF 09 02 04 00 42"
+        }
+      ],
+      "response": {
+        "cmd": "04",
+        "payload_format": [
+          "T1:i16le",
+          "T2:i16le",
+          "T3:i16le",
+          "T4:i16le"
+        ],
+        "note": "ManagecmdHp20::getThermostat closure @0x45d320；4 组 u16 LE 分别写入 field_f / field_17 / field_1f / field_27"
+      },
+      "confidence": "high",
+      "evidence": [
+        "managecmd_hp20.dart [closure] @0x45d320 (r2 = 4 → sendCMDWaitResult)",
+        "managecmd_hp20.dart getThermostat @0x45d2a0"
+      ]
+    },
+    {
+      "name": "set_thermostat",
+      "cmd": "03",
+      "direction": "write",
+      "summary": "设置指定预设点的温度；index 0..3 = T1..T4，index 4 = T5（主界面“目标温度”）",
+      "payload_format": [
+        "index:u8",
+        "temp:i16le"
+      ],
+      "frame_template_hex": "AF 09 02 03 03 <index> <temp_lo> <temp_hi> <LRC>",
+      "examples": [
+        {
+          "desc": "T1 = 200 ℃",
+          "args": {
+            "index": 0,
+            "temp": 200
+          },
+          "frame_hex": "AF 09 02 03 03 00 C8 00 78"
+        },
+        {
+          "desc": "T2 = 250 ℃",
+          "args": {
+            "index": 1,
+            "temp": 250
+          },
+          "frame_hex": "AF 09 02 03 03 01 FA 00 45"
+        },
+        {
+          "desc": "T5 (目标温度) = 180 ℃",
+          "args": {
+            "index": 4,
+            "temp": 180
+          },
+          "frame_hex": "AF 09 02 03 03 04 B4 00 88"
+        }
+      ],
+      "response": {
+        "cmd": "03",
+        "payload_format": [
+          "通常为空（App 只判断应答非空即可）"
+        ],
+        "note": "未观察到字段解析"
+      },
+      "confidence": "high",
+      "evidence": [
+        "managecmd_hp20.dart [closure] @0x45d1b0: Uint8Array(3); [0]=index, [1..2]=value u16 LE; r2 = 3 作为 cmd",
+        "setThermostatT1 @0x46088c (index 0 ← model+0xf), T2 @0x4604e4 (index 1 ← model+0x17), T3 @0x46013c (index 2 ← model+0x1f), T5 @0x45d0b4 (index 4 ← model+0x2f)",
+        "hp20mainpage.dart SetTarTem @0x45bd94 → setThermostatT5(0x45d0b4) + setReflow(0x45d544)"
+      ]
+    },
+    {
+      "name": "set_preheat",
+      "cmd": "05",
+      "direction": "write",
+      "summary": "选择并启动预热通道（T1..T4）；payload 1 字节 = 通道序号，App 点击主界面 T1..T4 按钮时发送",
+      "payload_format": [
+        "channel:u8 (0=T1, 1=T2, 2=T3, 3=T4)"
+      ],
+      "frame_template_hex": "AF 09 02 05 01 <channel> <LRC>",
+      "examples": [
+        {
+          "desc": "启动 T1",
+          "args": {
+            "channel": 0
+          },
+          "frame_hex": "AF 09 02 05 01 00 40"
+        },
+        {
+          "desc": "启动 T2",
+          "args": {
+            "channel": 1
+          },
+          "frame_hex": "AF 09 02 05 01 01 3F"
+        },
+        {
+          "desc": "启动 T3",
+          "args": {
+            "channel": 2
+          },
+          "frame_hex": "AF 09 02 05 01 02 3E"
+        },
+        {
+          "desc": "启动 T4",
+          "args": {
+            "channel": 3
+          },
+          "frame_hex": "AF 09 02 05 01 03 3D"
+        }
+      ],
+      "response": {
+        "cmd": "05",
+        "payload_format": [
+          "通常为空"
+        ],
+        "note": "失败时 App 打印“设置预设温度失败”"
+      },
+      "confidence": "high",
+      "evidence": [
+        "managecmd_hp20.dart [closure] @0x45aa44: Uint8Array(1)，[0]=model.field_37，r2 = 5",
+        "hp20mainpage.dart _OnBtnTopT @0x45a4f8: T1→field_37=0, T2→1, T3→2, T4→3，然后调用 setPreHeat()"
+      ]
+    },
+    {
+      "name": "get_reflow",
+      "cmd": "07",
+      "direction": "read",
+      "summary": "读回流焊 4 段曲线（每段 温度 + 时间），8 × u16 小端",
+      "payload_format": [],
+      "frame_template_hex": "AF 09 02 07 00 <LRC>",
+      "examples": [
+        {
+          "desc": "read reflow profile",
+          "frame_hex": "AF 09 02 07 00 3F"
+        }
+      ],
+      "response": {
+        "cmd": "07",
+        "payload_format": [
+          "preheat_temp",
+          "preheat_time",
+          "soak_temp",
+          "soak_time",
+          "reflow_temp",
+          "reflow_time",
+          "cool_temp",
+          "cool_time"
+        ],
+        "note": "顺序与 UI(hp20setreflowpage) 一致：预热温度/预热时间/恒温温度/恒温时间/回流温度/回流时间/冷却温度/冷却时间"
+      },
+      "confidence": "high",
+      "evidence": [
+        "managecmd_hp20.dart [closure] @0x45e80c: r2 = 7; 依次取 payload[0..15] 拼 u16 → field_3f,47,4f,57,5f,67,6f,77",
+        "hp20setreflowpage.dart 标签：预热温度/预热时间/恒温温度/恒温时间/回流温度/回流时间/冷却温度/冷却时间",
+        "hp20viewmodel.dart reflowSolderingInterfaceStrs @0x45bac0 = [PH, SK, RF, CL]"
+      ]
+    },
+    {
+      "name": "set_reflow",
+      "cmd": "06",
+      "direction": "write",
+      "summary": "写回流焊 4 段曲线，8 × u16 小端（16 字节）",
+      "payload_format": [
+        "preheat_temp",
+        "preheat_time",
+        "soak_temp",
+        "soak_time",
+        "reflow_temp",
+        "reflow_time",
+        "cool_temp",
+        "cool_time"
+      ],
+      "frame_template_hex": "AF 09 02 06 10 <t1_lo t1_hi ... t8_lo t8_hi> <LRC>",
+      "examples": [
+        {
+          "desc": "150℃/60s, 180℃/90s, 235℃/45s, 100℃/30s",
+          "args": {
+            "curve": [
+              150,
+              60,
+              180,
+              90,
+              235,
+              45,
+              100,
+              30
+            ]
+          },
+          "frame_hex": "AF 09 02 06 10 96 00 3C 00 B4 00 5A 00 EB 00 2D 00 64 00 1E 00 B6"
+        }
+      ],
+      "response": {
+        "cmd": "06",
+        "payload_format": [
+          "通常为空"
+        ]
+      },
+      "confidence": "high",
+      "evidence": [
+        "managecmd_hp20.dart [closure] @0x45d5c4: Uint8Array(16)，8 组 u16 LE 来自 field_3f..field_77，r2 = 6",
+        "hp20setreflowpage.dart [closure] → ManagecmdHp20::setReflow @0x45d544"
+      ]
+    },
+    {
+      "name": "get_repair",
+      "cmd": "0C",
+      "direction": "read",
+      "summary": "读维修模式 4 组参数（每组 温度 + 时间），8 × u16 小端",
+      "payload_format": [],
+      "frame_template_hex": "AF 09 02 0C 00 <LRC>",
+      "examples": [
+        {
+          "desc": "read repair params",
+          "frame_hex": "AF 09 02 0C 00 3A"
+        }
+      ],
+      "response": {
+        "cmd": "0C",
+        "payload_format": [
+          "debond_temp",
+          "debond_time",
+          "delam_temp",
+          "delam_time",
+          "group3_temp",
+          "group3_time",
+          "group4_temp",
+          "group4_time"
+        ],
+        "note": "第 1 组 UI 名 = 除胶温度/除胶时间，第 2 组 = 分层温度/分层时间，第 3/4 组标签未取全（见未确认清单）"
+      },
+      "confidence": "high",
+      "evidence": [
+        "managecmd_hp20.dart [closure] @0x45cc20: r2 = 12；payload[0..15] → field_e7,ef,f7,ff,+0x103,+0x107,+0x10b,+0x10f",
+        "hp20setrepairpage.dart 标签：除胶温度/除胶时间/分层温度/分层时间",
+        "hp20viewmodel.dart GetFunBtnStr @0x45a298: mode==4 时 T1..T4 → Debond/Delam/LAM/Reballing"
+      ]
+    },
+    {
+      "name": "set_repair",
+      "cmd": "0B",
+      "direction": "write",
+      "summary": "写维修模式 4 组参数，8 × u16 小端（16 字节）",
+      "payload_format": [
+        "debond_temp",
+        "debond_time",
+        "delam_temp",
+        "delam_time",
+        "group3_temp",
+        "group3_time",
+        "group4_temp",
+        "group4_time"
+      ],
+      "frame_template_hex": "AF 09 02 0B 10 <t1_lo t1_hi ... t8_lo t8_hi> <LRC>",
+      "examples": [
+        {
+          "desc": "120℃/60s, 150℃/90s, 180℃/60s, 200℃/45s",
+          "args": {
+            "params": [
+              120,
+              60,
+              150,
+              90,
+              180,
+              60,
+              200,
+              45
+            ]
+          },
+          "frame_hex": "AF 09 02 0B 10 78 00 3C 00 96 00 5A 00 B4 00 3C 00 C8 00 2D 00 A2"
+        }
+      ],
+      "response": {
+        "cmd": "0B",
+        "payload_format": [
+          "通常为空"
+        ]
+      },
+      "confidence": "high",
+      "evidence": [
+        "managecmd_hp20.dart [closure] @0x45c924: Uint8Array(16), r2 = 11",
+        "hp20setrepairpage.dart [closure] → setRepair @0x45c8a4"
+      ]
+    },
+    {
+      "name": "set_ble_name",
+      "cmd": "08",
+      "direction": "write",
+      "summary": "写设备蓝牙名；固定 20 字节 ASCII，不足补 0x00，超过 20 字符截断",
+      "payload_format": [
+        "name:20 x u8 (ASCII, zero padded)"
+      ],
+      "frame_template_hex": "AF 09 02 08 14 <20 字节名称> <LRC>",
+      "examples": [
+        {
+          "desc": "name = HP20",
+          "args": {
+            "name": "HP20"
+          },
+          "frame_hex": "AF 09 02 08 14 48 50 32 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30"
+        }
+      ],
+      "response": {
+        "cmd": "08",
+        "payload_format": [
+          "通常为空"
+        ]
+      },
+      "confidence": "high",
+      "evidence": [
+        "managecmd_hp20.dart [closure] @0x461898: Uint8Array(20)（r4 = 40 → Smi 20），逐字符写入并截断到 20，r2 = 8",
+        "hp20setpage.dart 标签“蓝牙名称”"
+      ]
+    },
+    {
+      "name": "get_ble_name",
+      "cmd": "09",
+      "direction": "read",
+      "summary": "读设备蓝牙名；应答 payload 为 ASCII 字节，去掉 0x00 后转字符串",
+      "payload_format": [],
+      "frame_template_hex": "AF 09 02 09 00 <LRC>",
+      "examples": [
+        {
+          "desc": "read name",
+          "frame_hex": "AF 09 02 09 00 3D"
+        }
+      ],
+      "response": {
+        "cmd": "09",
+        "payload_format": [
+          "name:n x u8 (ASCII, 可能存在 0x00 填充)"
+        ],
+        "note": "App 用 where((c) => …) 过滤后 String.fromCharCodes；空 payload 视为失败"
+      },
+      "confidence": "high",
+      "evidence": [
+        "managecmd_hp20.dart [closure] @0x461a3c (r2 = 9, createFromCharCodes)",
+        "getBleNameDirect @0x43484c (r2 = 9)"
+      ]
+    },
+    {
+      "name": "get_realtime",
+      "cmd": "0A",
+      "direction": "read",
+      "summary": "读实时数据（平台温度/当前温度/功率/目标温度/模式/通道/计时/风扇/单位）；App 以 125 ms 周期轮询",
+      "payload_format": [],
+      "frame_template_hex": "AF 09 02 0A 00 <LRC>",
+      "examples": [
+        {
+          "desc": "poll realtime",
+          "frame_hex": "AF 09 02 0A 00 3C"
+        }
+      ],
+      "response": {
+        "cmd": "0A",
+        "length_min": 11,
+        "payload_format": [
+          "platform_temp:u16le   (payload[0:2]) 平台温度",
+          "rated_power:u8        (payload[2])   额定/最大功率（powerRatio 分母）",
+          "current_temp:i16le    (payload[3:5]) 当前温度，bit15 = 符号",
+          "unused:u8             (payload[5])   App 读取后丢弃",
+          "current_power:u8      (payload[6])   当前功率（powerRatio 分子）",
+          "w1:u16le              (payload[7:9]) 目标温度/通道/模式打包字",
+          "w2:u16le              (payload[9:11]) 计时/风扇/单位打包字"
+        ],
+        "w1_bits": {
+          "target_temp": "w1[9:0]  (w1 & 0x3FF)",
+          "channel_or_stage": "w1[11:10] ((w1 >> 10) & 3)",
+          "mode": "w1[14:12] ((w1 >> 12) & 7)"
+        },
+        "w2_bits": {
+          "timer_seconds": "w2[5:0]  (w2 & 0x3F)",
+          "timer_minutes": "w2[12:6] ((w2 >> 6) & 0x7F)",
+          "bit12": "w2[12]",
+          "fan_level": "w2[13] ((w2 >> 13) & 1)",
+          "celsius": "w2[14] (1 = ℃, 0 = ℉)"
+        },
+        "note": "w1/w2 变化会触发 App 自动补读 cmd 04 / cmd 0C（模式或参数变更）"
+      },
+      "confidence": "high",
+      "evidence": [
+        "managecmd_hp20.dart getRealTimeData @0x433df0 (完整字节↔字段映射，含 bit 提取)",
+        "hp20viewmodel.dart platformTemperatureStr @0x45b898 = field_7f",
+        "hp20viewmodel.dart targetTempStr @0x45b690 = field_df + (field_af ? '℃' : '℉')",
+        "hp20viewmodel.dart powerRatio @0x45b7cc = field_97*100/field_87 (≤100)",
+        "hp20viewmodel.dart heartTimeStr @0x45b4f4 = field_bf:field_c7，field_c7>60 → 'OFF'",
+        "hp20viewmodel.dart stateStr @0x45b8ec / GetFunBtnStr @0x45a298 / heatingModeStrs @0x45ba48 / reflowSolderingInterfaceStrs @0x45bac0",
+        "hp20viewmodel.dart imgFan @0x45bb6c = assets/images/el15/el15wind0{field_b3}.png"
+      ]
+    }
+  ]
+}

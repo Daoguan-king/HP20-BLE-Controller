@@ -1,0 +1,516 @@
+{
+  "meta": {
+    "schema": "hp20-extra/v1",
+    "round": 2,
+    "date": "2026-10-17",
+    "target": "ALIENTEK HP20 (dev header 0x0209) via atk_xtool_V2.0.0.apk (Flutter/Dart AOT)",
+    "method": "blutter asm 注释 + 真机帧回归 (winapp/test_real_frames.py 三帧, 本仓库独立重算 LRC)",
+    "evidence_root": "out/blutter/asm/atk_xtool/",
+    "supersedes": [
+      "docs/hp20_protocol.md#7 的 payload[3:5]=当前温度 一行",
+      "docs/hp20_protocol.md#7 的 mode 0/1=加热、2=回流"
+    ]
+  },
+  "status_frame": {
+    "cmd_request": "AF 09 02 0A 00 3C",
+    "cmd_response": "DF 09 02 0A 0B <11B payload> <LRC>",
+    "parse_function": "ManagecmdHp20::getRealTimeData @0x433df0 (managecmd_hp20.dart:295)",
+    "payload_fields": [
+      {
+        "offset": "0..1",
+        "type": "u16le",
+        "field": "platform_temp",
+        "meaning": "当前/平台温度 ℃ (App 显示)",
+        "evidence": "hp20viewmodel.dart:540 platformTemperatureStr(0x45b898) 读 field_7f; parse @0x433f48-0x433f5c",
+        "confidence": "high"
+      },
+      {
+        "offset": "2",
+        "type": "u8",
+        "field": "supply_power_w",
+        "meaning": "供电/额定功率 W (powerRatio 分母)",
+        "evidence": "hp20viewmodel.dart:462 powerRatio(0x45b7cc) sdiv [6]*100/[2]",
+        "confidence": "high"
+      },
+      {
+        "offset": "3..4",
+        "type": "i16le",
+        "field": "input_voltage_raw",
+        "meaning": "输入电压 ×0.1V (200 -> 20.0V)",
+        "evidence": "hp20viewmodel.dart:894 inputVoltageStr(0x45bbf8) 读 field_8f 并 fdiv 10.0; parse @0x433fdc-0x433fe4 有 bit15 符号扩展",
+        "confidence": "high"
+      },
+      {
+        "offset": "5",
+        "type": "u8",
+        "field": "state_flags",
+        "meaning": "未命名状态字节: 真机 待机=0x00 / 加热=0x02",
+        "evidence": "parse @0x433ff4 只做越界检查不落字段(死读); 真机帧A/B/C",
+        "confidence": "medium"
+      },
+      {
+        "offset": "6",
+        "type": "u8",
+        "field": "output_power_w",
+        "meaning": "当前输出功率 W",
+        "evidence": "hp20viewmodel.dart:411 heatingPowerStr(0x45b72c) 读 field_97",
+        "confidence": "high"
+      },
+      {
+        "offset": "7..8",
+        "type": "u16le",
+        "field": "w1",
+        "meaning": "打包字: 目标温度/挡位/模式",
+        "evidence": "parse @0x4340c8-0x4340fc",
+        "confidence": "high"
+      },
+      {
+        "offset": "9..10",
+        "type": "u16le",
+        "field": "w2",
+        "meaning": "打包字: 计时 MM:SS + 3 个标志位",
+        "evidence": "parse @0x434100-0x434174",
+        "confidence": "high"
+      }
+    ]
+  },
+  "w1": {
+    "word": "w1 = payload[9..10]? n/a; w1 = payload[7] | payload[8]<<8",
+    "bits": [
+      {
+        "field": "target_temp",
+        "mask": "w1 & 0x3FF",
+        "bits": "9..0",
+        "note": "目标温度原值(℃/℉ 见 w2.bit14)",
+        "evidence": "parse @0x4340f0-0x4340fc -> field_df; targetTempStr @0x45b690",
+        "confidence": "high"
+      },
+      {
+        "field": "gear_or_stage",
+        "mask": "(w1>>10) & 3",
+        "bits": "11..10",
+        "note": "加热=T1..T4 通道; 回流=PH/SK/RF/CL 阶段; 维修=Debond/Delam/LAM/Reballing",
+        "evidence": "parse @0x4340dc-0x4340ec -> field_d7; stateStr @0x45b8ec; GetFunBtnStr @0x45a298",
+        "confidence": "high"
+      },
+      {
+        "field": "mode",
+        "mask": "(w1>>12) & 7",
+        "bits": "14..12",
+        "note": "工作模式枚举, 见 mode_enum",
+        "evidence": "parse @0x4340c8-0x4340d8 -> field_cf",
+        "confidence": "high"
+      },
+      {
+        "field": "unused",
+        "mask": "(w1>>15) & 1",
+        "bits": "15",
+        "note": "App 从未读取(全仓库无 field 承载); 真机三帧恒 0",
+        "evidence": "getRealTimeData 反汇编无掩码 0x8000",
+        "confidence": "medium"
+      }
+    ]
+  },
+  "w2": {
+    "value_field": "w2 = payload[9] | payload[10]<<8 (u16le)",
+    "bits": [
+      {
+        "field": "timer_seconds",
+        "mask": "w2 & 0x3F",
+        "bits": "5..0",
+        "note": "计时秒; 61..63 为非法/停表哨兵(App 判 >60 即 OFF)",
+        "evidence": "parse @0x434168-0x434174 -> field_c7; heartTimeStr @0x45b4f4",
+        "confidence": "high"
+      },
+      {
+        "field": "timer_minutes",
+        "mask": "(w2>>6) & 0x7F",
+        "bits": "12..6",
+        "note": "计时分; 与 SS 合成 MM:SS = ((w2>>6)&0x7F, w2&0x3F), 不是总秒数",
+        "evidence": "parse @0x434154-0x434164 -> field_bf; heartTimeStr @0x45b4f4 用 toString+padLeft(2,'0') 拼 \"MM:SS\"",
+        "confidence": "high"
+      },
+      {
+        "field": "flag12",
+        "mask": "(w2>>12) & 1",
+        "bits": "12",
+        "note": "-> field_bb -> 选 assets/images/hp20/hp15platform0|1.png (加热平台图); 真机三帧恒 0",
+        "evidence": "parse @0x434134-0x434150; hp20mainpage.dart:1086 (0x457e70)",
+        "confidence": "medium"
+      },
+      {
+        "field": "fan_bit",
+        "mask": "(w2>>13) & 1",
+        "bits": "13",
+        "note": "唯一与风扇相关的位 -> field_b3 -> assets/images/el15/el15wind0{0|1}.png; 真机 待机=0 / 加热=1",
+        "evidence": "parse @0x434120-0x434130; imgFan @0x45bb6c; hp20mainpage.dart:1022 (0x457dc8)",
+        "confidence": "high"
+      },
+      {
+        "field": "fahrenheit",
+        "mask": "(w2>>14) & 1",
+        "bits": "14",
+        "note": "1 = ℉, 0 = ℃ (App: field_af ? '℉' : '℃'); 真机恒 0",
+        "evidence": "parse @0x434100-0x43411c; targetTempStr @0x45b6ec-0x45b70c; 默认温度 120℃/248℉ 双常量 @0x45be48/0x45be54",
+        "confidence": "high"
+      },
+      {
+        "field": "unused",
+        "mask": "(w2>>15) & 1",
+        "bits": "15",
+        "note": "App 未使用; 真机恒 0",
+        "evidence": "getRealTimeData 反汇编无掩码 0x8000",
+        "confidence": "medium"
+      }
+    ],
+    "timer_formula": {
+      "verified": "MM:SS 显示 = pad2((w2>>6)&0x7F) + ':' + pad2(w2&0x3F); 若 (w2&0x3F) > 60 则显示 'OFF'",
+      "not_a_total": "不存在『总秒数 = MM*60+SS』的乘法/除法: heartTimeStr 里的常数 0x3C=60 是 Dart Smi 的 class id(kSmiCid) 占位, 不是除数",
+      "proof": [
+        "el15viewmodel.dart:1324-1331 同款 GDT 0x48b7 调用前已用 sdiv/msub 显式算完商余, 证明该 GDT 槽位是 toString 而非除法",
+        "heartTimeStr 后续用 GDT[cid-0x1000](2,'0') = String.padLeft(2,'0'), 要求前一步产出 String",
+        "真机帧 A: w2=0x04B2 -> 18:50, 且 18*64+50 = 1202 = 0x04B2 (MM<<6|SS 自洽)"
+      ]
+    }
+  },
+  "fan": {
+    "frame_bits": {
+      "mask": "(w2>>13) & 1",
+      "bits": "payload[10] bit5",
+      "encoding": "0/1 (布尔), 不是 1..5 也不是 0..4"
+    },
+    "app_mapping": {
+      "getter": "HP20viewmodel::imgFan @0x45bb6c (hp20viewmodel.dart:836)",
+      "code": "\"assets/images/el15/el15wind0\" + field_b3 + \".png\"",
+      "usable_levels": 2,
+      "widget": "hp20mainpage.dart:1025-1045 Image.asset(..., width 23, height 23, fit) 单个 23x23 图标, 无 5 档映射表"
+    },
+    "assets_in_apk": {
+      "assets/images/el15/el15wind00.png": "40x40 RGBA, alpha>0 = 737px",
+      "assets/images/el15/el15wind01.png": "40x40 RGBA, alpha>0 = 791px",
+      "assets/images/el15/el15wind02.png": "40x40 RGBA, alpha>0 = 849px",
+      "assets/images/el15/el15wind03.png": "40x40 RGBA, alpha>0 = 906px",
+      "assets/images/el15/el15wind04.png": "40x40 RGBA, alpha>0 = 964px",
+      "assets/images/el15/el15wind05.png": "40x40 RGBA, alpha>0 = 1024px",
+      "assets/images/hp20/hp15fan0.png": "46x45 RGBA, alpha>0 = 829px (Dart 字符串中从未引用)",
+      "assets/images/hp20/hp15fan1.png": "40x40 RGBA, alpha>0 = 364px (Dart 字符串中从未引用)"
+    },
+    "asset_ladder_note": "el15wind00..05 的 alpha 覆盖单调递增 (+51~+60 每档, 737->1024), 是 6 级风速阶梯 (0..5); HP20 只取到第 0/1 级",
+    "conclusion": "11 字节状态帧里只有 1 个风扇相关位 (w2 bit13), 没有 3 位风速字段; 设备面板的 1~5 叶风速是固件本地量, 不经 BLE 回传(或在未解析字节里, 见 open_items O1)",
+    "confidence": "medium-high",
+    "real_frames": {
+      "standby": "w2 bit13 = 0",
+      "heating": "w2 bit13 = 1 (两帧)"
+    }
+  },
+  "mode_enum": {
+    "field": "mode = (w1>>12) & 7  (HP20viewmodel model.field_cf)",
+    "dart_enum": null,
+    "note": "Dart 侧没有 HP20 工作模式枚举: 全仓只有 enum SessionStatus / DevType / WorkStatus; 后者是波形控件的 run=1/stop=0 两成员枚举, 与工作模式无关",
+    "workstatus_enum_evidence": "out/blutter/objs.txt:28552 Obj!WorkStatus@6c1eb1 {off_8: int(0x1), off_10: \"run\"}; :28559 Obj!WorkStatus@6c1ed1 {off_8: int(0x0), off_10: \"stop\"}; enum 声明 presentation/cuscontrols/waveform/WaveformEnum.dart:8",
+    "members": [
+      {
+        "value": 0,
+        "name": "待机",
+        "name_en": "standby/idle",
+        "evidence": "真机帧A mode=0(目标250/T4/2W); hp20mainpage.dart:820-832 (0x457b9c) case 0 -> hp15page0.png; stateStr cf==0 -> \"\"",
+        "confidence": "high"
+      },
+      {
+        "value": 1,
+        "name": "回流焊",
+        "name_en": "reflow",
+        "evidence": "hp20mainpage.dart:6016-6027 (0x45bdd8) cf==1 -> getReflow(); 页面图 hp15page1.png(0x457bc8); 用户实测",
+        "confidence": "high"
+      },
+      {
+        "value": 2,
+        "name": "加热",
+        "name_en": "heating",
+        "evidence": "真机帧B/C mode=2(目标=实测=60/66, T1, 6/11W); hp15page2.png(0x457bd4); GetFunBtnStr cf==2 -> 原样返回 T1..T4 (0x45a2c4-0x45a2d8); 用户实测",
+        "confidence": "high"
+      },
+      {
+        "value": 3,
+        "name": "设置",
+        "name_en": "settings",
+        "evidence": "hp15page3.png(0x457be8); 用户实测; stateStr cf==3 -> \"\"",
+        "confidence": "medium-high"
+      },
+      {
+        "value": 4,
+        "name": "维修",
+        "name_en": "repair",
+        "evidence": "GetFunBtnStr cf==4 -> Debond/Delam/LAM/Reballing (0x45a2d8-0x45a388); hp20mainpage.dart:3374 (0x4595d0) cf==4 -> tempButton T1..T4; 0x458d94 cf in {1,2,4} 才显示目标温度; 用户实测",
+        "confidence": "high"
+      },
+      {
+        "value": 8,
+        "name": "Main(主页)",
+        "name_en": "main/home",
+        "evidence": "stateStr cf==8 -> \"Main\" (0x45ba0c-0x45ba24); hp15page4.png(0x457c08)",
+        "confidence": "medium"
+      }
+    ],
+    "app_bug": "stateStr @0x45b8ec 把 cf==1 与 cf==2 的字符串表写反了: cf==1(回流) 返回 heatingModeStrs[T1..T4], cf==2(加热) 返回 reflowSolderingInterfaceStrs[PH/SK/RF/CL]",
+    "observed_vs_code": "用户实测 0=待机/2=加热/1=回流焊/3=设置/4=维修 与 hp20mainpage 的页面图与 getReflow 判定一致; 与 stateStr 不一致(stateStr 是 App 自身 bug)"
+  },
+  "mode_field_semantics": {
+    "0": {
+      "target": "回显最后设定的目标(帧A=250)",
+      "gear_or_stage": "T4/3 = 停止通道 (winapp 实测 停止后为 3)",
+      "output_power": "可为 0..2W",
+      "w2": "计时可能仍在走(帧A=18:50)",
+      "b5": "0x00"
+    },
+    "1": {
+      "gear_or_stage": "PH/SK/RF/CL 阶段",
+      "target": "当前阶段目标温度 (App 显示 targetTempStr)",
+      "output_power": "阶段功率",
+      "note": "App 进入该模式会 getReflow() 读曲线 (0x45bdf4)"
+    },
+    "2": {
+      "gear_or_stage": "T1..T4 通道",
+      "target": "该通道预设温度 (帧B=60 帧C=66, 与实测温度相等=恒温)",
+      "output_power": "6/11W 实测",
+      "b5": "0x02"
+    },
+    "3": {
+      "note": "未抓到真机帧; 字段是否变成参数回显 = 未知(见 open_items O3)"
+    },
+    "4": {
+      "gear_or_stage": "Debond/Delam/LAM/Reballing 子功能",
+      "target": "该子功能目标温度",
+      "note": "参数经 cmd 0x0C 单独读, 不在状态帧"
+    },
+    "8": {
+      "note": "主页; 无真机帧"
+    }
+  },
+  "timeout_setting": {
+    "question": "『加热超时时间』怎么来的?",
+    "answer": "设备本地设置, 不经 BLE 写入也不由状态帧回传; App 从未把它当超时使用 — App 里唯一的时间显示是状态帧 w2 的 MM:SS 计时",
+    "evidence": [
+      "App 的 ManagecmdHp20 全部命令 = 0x00/03/04/05/06/07/08/09/0A/0B/0C, 没有任何超时/风扇/单位/功率写入 (tools/re2/cmd_consts.py 输出 + managecmd_hp20.dart 函数清单)",
+      "0x03 的 index 只到 0..4 = setThermostatT1..T5 (setThermostat 0x45d100, setThermostatT5 0x45d0b4)",
+      "0x0B 写 16 字节 = 8×u16 = 4 组(温度,时间), 是维修参数, 时间范围 10-300s (手册 300 行 除胶时间 等); 0x06 写回流 8 字段",
+      "hp20setpage.dart 只有『蓝牙名称/波形选择』, 没有加热超时 UI",
+      "device 手册 out/hp20_manual.txt:295 加热超时 出厂 20Min, 可调 1-30Min 或关闭 -> 设备本地菜单",
+      "HP20viewmodel 只有 heartTimeStr 一个时间格式化函数, 它直接格式化 w2 的 MM:SS"
+    ],
+    "w2_is_timer_not_timeout": {
+      "reasons": [
+        "同一设备两次不同会话: 待机帧 A w2=0x04B2(=18:50), 加热帧 B/C w2=0x29BF(=38:63->OFF)。若是『设定值回显』两次应相同",
+        "帧 B/C 的功率/电压/温度都不同而 w2 相同 -> w2 不随电学量变化",
+        "winapp 实测『w2 会每秒 -1』 -> 递减计数器(计时), 不是设定值"
+      ],
+      "confidence": "high"
+    },
+    "plus20s_analysis": {
+      "verdict": "Dart 侧无法产生 +20s: heartTimeStr 不做任何算术(无乘除/无偏移), 且 w2=0x29BF 在 App 里显示 'OFF' 而不是任何时间",
+      "candidates": [
+        {
+          "id": "C1",
+          "formula": "MM=(w2>>6)&0x7F, SS=w2&0x3F; 总秒=MM*60+SS",
+          "result_for_0x29BF": "38:63 -> 2343s",
+          "note": "并非 App 行为; SS=63 非法",
+          "falsify": "抓一帧 SS 在 0..59 的稳定计时帧, 比对 App 显示与 MM*60+SS 是否一致"
+        },
+        {
+          "id": "C2",
+          "formula": "低13位 = w2 & 0x1FFF 当秒",
+          "result_for_0x29BF": "2495s = 41:35",
+          "note": "与 10min=600s 矛盾",
+          "falsify": "设定 1min 超时后抓帧, 看低13位是否 ~60 或 ~600"
+        },
+        {
+          "id": "C3",
+          "formula": "(w2 & 0x1FFF) / 4 秒 (0.25s 刻度)",
+          "result_for_0x29BF": "623.75s (=10:23.75)",
+          "note": "唯一能给出『10min 量级』的公式, 但偏差 23.75s 而非 20s; 需 0.24s 刻度才凑 598.8s",
+          "falsify": "设定 2min/5min 超时各抓一帧: C3 预测 0.25*N≈设定值; C2 预测 N≈设定秒数"
+        },
+        {
+          "id": "C4",
+          "formula": "w2>>10 当分钟",
+          "result_for_0x29BF": "10 min",
+          "note": "数值巧合成 10, 但与 MM:SS 位域冲突(bit13 会污染), 且待机帧 0x04B2>>10=1 无法解释",
+          "falsify": "把超时改成 12min 再抓帧: 若 w2>>10 == 12 则 C4 成立"
+        },
+        {
+          "id": "C5",
+          "formula": "w2 当总秒数",
+          "result_for_0x29BF": "10687s = 178:07",
+          "note": "winapp 曾写过的『假设』, 与 10min 无关",
+          "falsify": "同上, 一次改设定即可"
+        },
+        {
+          "id": "C6",
+          "formula": "App 式 38:63 归一化成 40:03",
+          "result_for_0x29BF": "2403s",
+          "note": "把非法秒进位, 不产生 +20s"
+        }
+      ],
+      "most_likely": "『+20s』来自把 w2 当成加热超时设定值的那套换算本身(候选 C3 量级最接近), 不是 App 行为; 也可能是 0.25s 刻度 + 6 位秒域进位误差叠加。需要用真机两三个不同设定值一次性判定(见 suggested_experiments)"
+    }
+  },
+  "new_commands": {
+    "found": false,
+    "command_set": [
+      {
+        "cmd": "0x00",
+        "name": "识别 (DeviceSession::RegisterDev)",
+        "evidence": "device_session.dart RegisterDev @0x431c74"
+      },
+      {
+        "cmd": "0x03",
+        "name": "设温/选通道 index+i16le",
+        "evidence": "setThermostat closure cmd const=3 (managecmd_hp20.dart:2560)"
+      },
+      {
+        "cmd": "0x04",
+        "name": "读预设 (4×u16)",
+        "evidence": "getThermostat closure cmd=4 (:2664)"
+      },
+      {
+        "cmd": "0x05",
+        "name": "启动预热/选挡",
+        "evidence": "setPreHeat closure cmd=5 (:1629)"
+      },
+      {
+        "cmd": "0x06",
+        "name": "写回流曲线 (8×u16)",
+        "evidence": "setReflow closure cmd=6 (:3055)"
+      },
+      {
+        "cmd": "0x07",
+        "name": "读回流曲线",
+        "evidence": "getReflow closure cmd=7 (:3159)"
+      },
+      {
+        "cmd": "0x08",
+        "name": "写蓝牙名",
+        "evidence": "setBleName closure cmd=8 (:3709)"
+      },
+      {
+        "cmd": "0x09",
+        "name": "读蓝牙名",
+        "evidence": "getBleName closure cmd=9 (:3816)"
+      },
+      {
+        "cmd": "0x0A",
+        "name": "读实时状态",
+        "evidence": "getRealTimeData r2=10 (:317)"
+      },
+      {
+        "cmd": "0x0B",
+        "name": "写维修参数 (16B=8×u16)",
+        "evidence": "setRepair closure cmd=11 (:1896)"
+      },
+      {
+        "cmd": "0x0C",
+        "name": "读维修参数",
+        "evidence": "getRepair/getRepair2 cmd=12 (:2000)"
+      }
+    ],
+    "statement": "第 12/13 条命令不存在: ManagecmdHp20 的 12 个 closure + 8 个 sendCMDWaitResult 调用的常量全部落在 0x00..0x0C (tools/re2/cmd_consts.py)"
+  },
+  "open_items": [
+    {
+      "id": "O1",
+      "q": "payload[5] 语义",
+      "state": "App 读了即丢(parse @0x433ff4 只有越界检查); 真机 待机=0x00 / 加热=0x02 (帧A vs B/C); 用户此前只见到 0x02 是因为只在加热态采样",
+      "hypothesis": "加热状态/输出标志字节 (bit1 = 加热进行中) 或阶段码 0=待机,2=恒温",
+      "confidence": "low-medium",
+      "probe": "在 升温 / 恒温 / 降温 / 回流焊四阶段各抓 20 帧, 统计 payload[5] 取值集合"
+    },
+    {
+      "id": "O2",
+      "q": "w2 递减速率与 MM:SS 的对应",
+      "state": "winapp 见过『每秒 -1』; 帧A=18:50(合法), 帧B/C=38:63(非法->OFF)",
+      "hypothesis": "w2 = 设备计时计数器, SS 域 61..63 为停表哨兵",
+      "probe": "静置 60s 每秒抓帧, 记录 (w2, 面板 ⑤计时 截图) 逐点比对"
+    },
+    {
+      "id": "O3",
+      "q": "设置模式(3)下状态帧是否变参数回显",
+      "state": "未抓到 mode=3 真机帧",
+      "probe": "进入设置菜单抓帧, 对比 W1/W2/[5]/[6]"
+    },
+    {
+      "id": "O4",
+      "q": "风速 1..5 是否真的不进帧",
+      "state": "11 字节里只有 w2 bit13 一个布尔位; 无 3 位字段",
+      "probe": "让面板风速分别显示 1~5 档, 每档抓 20 帧做全位差分"
+    },
+    {
+      "id": "O5",
+      "q": "w2 bit12 / bit15 语义",
+      "state": "bit12 -> hp15platform0/1 图; bit15 无人读",
+      "probe": "在戴/不戴加热平台配件、插入不同电源时抓帧"
+    }
+  ],
+  "suggested_experiments": [
+    {
+      "goal": "判定 w2 是否 = 计时 MM:SS (最强判定)",
+      "steps": [
+        "设备置加热模式并让计时开始",
+        "每秒抓一帧 cmd 0x0A 应答 30 帧",
+        "同时给面板 ⑤计时 拍照",
+        "把 (w2>>6)&0x7F 与 w2&0x3F 和面板 MM:SS 逐帧对齐"
+      ],
+      "expect": "若对齐 -> w2 bit12..0 = 计时; 若面板 = (w2&0x1FFF)/4 -> 则是 0.25s 刻度"
+    },
+    {
+      "goal": "一劳永逸判定『加热超时』是否进帧",
+      "steps": [
+        "把加热超时依次设成 1 / 10 / 30 min(或关闭)",
+        "每次静置待机抓 20 帧",
+        "对三组帧做全 11 字节差分"
+      ],
+      "expect": "若三组帧全同 -> 超时绝不进帧, W2≠超时"
+    },
+    {
+      "goal": "定位风扇风速位",
+      "steps": [
+        "把设备分别置于 面板风速 1/2/3/4/5 档",
+        "每档抓 20 帧",
+        "对 w2 与 payload[5] 逐位统计取值"
+      ],
+      "expect": "若某 3 位域随档位单调 1..5 -> 那就是风速; 若全部恒定 -> 风速不出帧"
+    },
+    {
+      "goal": "模式枚举补全 3/8 与 [5] 的取值域",
+      "steps": [
+        "依次进入 待机/加热/回流焊/设置/维修/主页",
+        "每个界面抓 10 帧"
+      ],
+      "expect": "得到 mode 值集合与 [5] 在各模式的取值"
+    }
+  ],
+  "evidence_index": [
+    "out/blutter/asm/atk_xtool/core/protocol/managecmd/managecmd_hp20.dart:295-660  getRealTimeData @0x433df0 (payload 全字段与位掩码)",
+    "out/blutter/asm/atk_xtool/core/protocol/managecmd/managecmd_hp20.dart:433-483   [0:2]/[2]/[3:5] 组装与符号扩展",
+    "out/blutter/asm/atk_xtool/core/protocol/managecmd/managecmd_hp20.dart:485-503   [5] 只越界检查, 无 store",
+    "out/blutter/asm/atk_xtool/core/protocol/managecmd/managecmd_hp20.dart:562-620   w1 位域 / w2 三个标志位",
+    "out/blutter/asm/atk_xtool/data/viewmodel/hp20viewmodel.dart:198-348  heartTimeStr @0x45b4f4",
+    "out/blutter/asm/atk_xtool/data/viewmodel/hp20viewmodel.dart:349-410  targetTempStr @0x45b690 (℃/℉)",
+    "out/blutter/asm/atk_xtool/data/viewmodel/hp20viewmodel.dart:462-539  powerRatio @0x45b7cc",
+    "out/blutter/asm/atk_xtool/data/viewmodel/hp20viewmodel.dart:575-706  stateStr @0x45b8ec (cf 1/2 字符串表写反)",
+    "out/blutter/asm/atk_xtool/data/viewmodel/hp20viewmodel.dart:836-893  imgFan @0x45bb6c",
+    "out/blutter/asm/atk_xtool/data/viewmodel/hp20viewmodel.dart:894-966  inputVoltageStr @0x45bbf8 (/10)",
+    "out/blutter/asm/atk_xtool/presentation/pages/hp20page/hp20mainpage.dart:814-861  cf -> hp15page0..4 页面图 switch",
+    "out/blutter/asm/atk_xtool/presentation/pages/hp20page/hp20mainpage.dart:1017-1045 Image.asset(imgFan(),23x23)",
+    "out/blutter/asm/atk_xtool/presentation/pages/hp20page/hp20mainpage.dart:1082-1098 field_bb -> hp15platform0/1",
+    "out/blutter/asm/atk_xtool/presentation/pages/hp20page/hp20mainpage.dart:6014-6027 cf==1 -> getReflow()",
+    "out/blutter/asm/atk_xtool/presentation/pages/hp20page/hp20mainpage.dart:3368-3381 cf==4 -> tempButton T1..T4",
+    "out/blutter/asm/atk_xtool/presentation/pages/hp20page/hp20mainpage.dart:2565-2583 cf in {1,2,4} 才显示目标温度",
+    "out/blutter/asm/atk_xtool/data/viewmodel/hp20viewmodel.dart:10-113  GetFunBtnStr @0x45a298 (cf 2 原样, cf 4 维修名)",
+    "out/blutter/asm/atk_xtool/data/viewmodel/el15viewmodel.dart:1324-1357 GDT 0x48b7=toString 的证明(sdiv/msub 在调用之前)",
+    "out/blutter/objs.txt:28552-28564  WorkStatus run=1 / stop=0 (波形控件枚举, 非工作模式)",
+    "out/hp20_manual.txt:210/240/266 设备面板『风扇图标，风速 1~5 档』; :283-355 设置表(加热超时 20Min, 1-30Min/关闭)",
+    "winapp/test_real_frames.py:19-20 真机三帧; winapp/README.md:105-124 实测字段表",
+    "tools/re2/hp20_extra_decode.py 三帧独立解码 + LRC 重算; tools/re2/cmd_consts.py 命令常量清单; tools/re2/scan_funcs.py getter/字段清单; tools/re2/asset_stats.py 图标 alpha 阶梯",
+    "out/blutter/asm/atk_xtool/core/protocol/managecmd/managecmd_el15.dart:519-524  EL15 三位风速域(asr #6 ; and #7) -> 证明 el15wind00..05 是 0..5 六级素材"
+  ]
+}
